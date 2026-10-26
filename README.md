@@ -1,474 +1,108 @@
-# 🍎 GitHub Mac Remote
+# Mac per sviluppo: RustDesk + Chrome Remote Desktop
 
-> **Access Apple Silicon Macs remotely through GitHub Actions — RustDesk, VNC, or Parsec**
+Sessione macOS temporanea su GitHub Actions, destinata allo sviluppo e ai test del progetto. Mantiene RustDesk come primo accesso, installa Chrome e Chrome Remote Desktop Host e crea l'amministratore aggiuntivo `remoteadmin` a ogni esecuzione.
 
-Turn GitHub Actions macOS runners into remotely accessible desktops. Connect via RustDesk, VNC over Tailscale, or Parsec.
+## Prima di usare questa versione
 
-[![RustDesk Session](https://img.shields.io/badge/🦀_Start_Session-RustDesk-orange?style=for-the-badge)](../../actions/workflows/rustdesk-session.yml)
-[![VNC Session](https://img.shields.io/badge/🖥️_Start_Session-VNC_Tailscale-blue?style=for-the-badge)](../../actions/workflows/vnc-session.yml)
+La versione precedente caricava password in chiaro negli artifact. **Gli artifact di un repository pubblico sono scaricabili da chiunque abbia un account GitHub e accesso in lettura**: il nome dell'utente nel file non limita l'accesso. Il masking nei log non cifra gli artifact. [Documentazione GitHub](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts)
 
----
+Se hai gia eseguito quella versione, termina le vecchie sessioni, elimina gli artifact e i log che contengono dati sensibili e considera compromesse le credenziali pubblicate. Se qualcuno poteva collegarsi mentre usavi la VM, revoca anche sessioni/token degli account usati nel Mac e cambia le password eventualmente esposte. Una modifica al codice non elimina i dati delle esecuzioni passate o le copie gia scaricate.
 
-## ✨ Features
+Questa versione pubblica **solo un file cifrato con age**, contenente ID RustDesk e password casuali nuove per ogni sessione. La chiave privata rimane sul tuo computer. Non sono necessari password personali, chiavi private o token Google nei Secrets di GitHub.
 
-| Feature | Description |
-|---------|-------------|
-| 🖥️ **Real Mac ARM64** | Virtualized Mac Mini with Apple Silicon |
-| 🦀 **RustDesk** | Remote access without complex setup |
-| 🎮 **Parsec Pre-installed** | Optional low-latency alternative |
-| 🔐 **Admin User Created** | Dedicated admin account for system authentication |
-| ⏱️ **Configurable Sessions** | From 1h to 6h per session |
-| 🔗 **Extended Sessions** | Auto-chaining for >6h sessions |
-| 📊 **Multiple Sizes** | Standard, Large, XLarge, Intel (macOS 26) |
-| 🔒 **Secure Credentials** | Passwords never shown in logs |
-| 🌐 **Unique IP Guarantee** | Each session gets a fresh, unique IP via Cloudflare WARP |
-| 🖥️ **macOS VNC** | Full Mac desktop via VNC + Tailscale |
-| 📋 **IP Tracking** | Tracks IP history per user to detect duplicates |
+## Configurazione iniziale (una volta)
 
----
+1. Installa `age` **sul tuo computer** dalle [release ufficiali](https://github.com/FiloSottile/age/releases) e aggiungi `age` e `age-keygen` al PATH. Su Mac puoi usare `brew install age`.
+2. In una cartella privata **fuori dal repository**, genera la chiave:
 
-## 🚀 Quick Start
+   ```text
+   age-keygen -o remote-mac-key.txt
+   age-keygen -y remote-mac-key.txt
+   ```
 
-### Step 1: Fork or Clone
+   Il secondo comando mostra la chiave pubblica che inizia con `age1`. Conserva `remote-mac-key.txt` solo sul tuo PC, con un backup protetto: contiene la **chiave privata**. Non incollarla in chat, Secrets, log, commit o artifact. Se la perdi, non puoi recuperare le credenziali cifrate.
 
-```bash
-# Clone the repository
-git clone https://github.com/brunusansi/github-mac-remote.git
-```
+3. Nel tuo fork apri **Settings → Secrets and variables → Actions → Variables → New repository variable**. Nome: `AGE_RECIPIENT`. Valore: soltanto la chiave **pubblica** `age1...`.
+4. Integra questa modifica nel branch predefinito. Apri **Actions → Mac development session (RustDesk + Chrome) → Run workflow**, selezionando quel branch.
 
-Or **Fork** to your account/organization.
+Il workflow accetta solo avvio manuale e riesecuzione da parte del proprietario del repository personale. I collaboratori devono usare un proprio fork e una propria chiave. Non e una piattaforma multiutente: tutti gli artifact di questo fork sono cifrati per il destinatario impostato dal proprietario.
 
-### Step 2: Install RustDesk on your computer
+## Collegamento a ogni sessione
 
-Download from: **https://rustdesk.com/download**
+1. Attendi il completamento di **Publish ONLY encrypted connection details**. Puoi scaricare l'artifact anche mentre il job continua; non serve aspettarne la fine.
+2. Scarica `encrypted-connection-<run-id>-<attempt>` dalla pagina dell'esecuzione ed estrai lo ZIP.
+3. Decifra **sul tuo PC**, usando i percorsi dei tuoi file:
 
-| System | Download |
-|--------|----------|
-| Windows | [rustdesk-x86_64.exe](https://github.com/rustdesk/rustdesk/releases/latest) |
-| macOS Intel | [rustdesk-x86_64.dmg](https://github.com/rustdesk/rustdesk/releases/latest) |
-| macOS Apple Silicon | [rustdesk-aarch64.dmg](https://github.com/rustdesk/rustdesk/releases/latest) |
-| Linux | [.deb](https://github.com/rustdesk/rustdesk/releases/latest) / [.AppImage](https://github.com/rustdesk/rustdesk/releases/latest) |
+   ```text
+   age --decrypt --identity remote-mac-key.txt --output connection-info.txt connection-info.txt.age
+   ```
 
-### Step 3: Start a session
+4. Apri `connection-info.txt`: contiene ID/password RustDesk e nome/password di `remoteadmin`. Collegati con RustDesk. Il file decifrato e sensibile: conservalo privatamente ed eliminalo quando non serve.
+5. Il passaggio successivo installa e apre Chrome su `https://remotedesktop.google.com/access`. Controlla l'esito del relativo step. Se il download Google fallisce, RustDesk rimane disponibile durante la sessione per consentire il recupero manuale.
 
-1. Go to **Actions** → **"🦀 RustDesk Mac Session"**
-2. Click **"Run workflow"**
-3. Configure:
-   - **Duration**: Session time (1-6 hours)
-   - **macOS Version**: Choose 14 (Sonoma), 15 (Sequoia), or 26 (Tahoe)
-   - **Runner size**: Mac size (see table below)
-   - **Unique IP**: Enable to guarantee a fresh IP via Cloudflare WARP VPN
-4. Click **"Run workflow"**
+Non vengono pubblicati ID RustDesk, password, indirizzi IP, geolocalizzazione, file di configurazione o profili browser in chiaro. Sono pubblici codice, metadati e normali log di stato/installazione del workflow. Non scrivere dati personali nei comandi del workflow.
 
-### Step 4: Connect
+## Cosa e automatico e cosa richiede la GUI
 
-1. Wait for the workflow to reach **"Keep Session Alive"** step
-2. In the **logs**, see the **RustDesk ID** (9 digits)
-3. Download the **artifact** `credentials-<your-username>-<run-id>` from the Summary tab
-4. Open the file to see both **passwords** (RustDesk and macOS)
-5. In **RustDesk**, enter the ID and RustDesk password
-6. **Connected!** 🎉
+| Operazione | Comportamento |
+|---|---|
+| RustDesk | Download della release fissata, verifica SHA-256 e firma, avvio con launchd e password casuale verificata tramite CLI |
+| Chrome | Installazione dal DMG ufficiale, verifica firma Google e Gatekeeper, apertura della pagina CRD |
+| Chrome Remote Desktop Host | Installazione del pacchetto ufficiale firmato Google |
+| Amministratore aggiuntivo | Creazione di `remoteadmin`, home privata, verifica gruppo admin e autenticazione con password |
+| Account Google e PIN CRD | Da configurare nella GUI attraverso RustDesk |
+| Accessibilita e registrazione schermo | Consensi macOS da concedere quando richiesti; possono essere limitati dalla VM |
+| Sessione grafica di `remoteadmin` | Non viene effettuato automaticamente il cambio utente; l'account serve anzitutto per autenticare le operazioni amministrative |
 
-> 🔒 **Security**: Passwords do NOT appear in logs. Only in the private artifact.
+In Chrome, accedi a Google, abilita l'accesso remoto, scegli nome e PIN e concedi i permessi richiesti in **Impostazioni di Sistema → Privacy e sicurezza**. Quando compare un dialogo amministrativo, usa `remoteadmin` e la password decifrata. Verifica una connessione CRD da un secondo dispositivo prima di affidarti a quel canale. [Guida ufficiale Google](https://support.google.com/chrome/answer/1649523?hl=it)
 
----
+Installare l'Host non equivale a registrarlo sul tuo account Google. Il workflow non tenta di riutilizzare token OAuth o copiare un profilo Chrome. La VM viene ricreata a ogni job: installazione e account macOS sono automatici, ma login Google, registrazione e consensi possono dover essere ripetuti. Non viene promesso un avvio CRD gia autenticato.
 
-## 🎮 Parsec (Optional)
+L'appartenenza al gruppo `admin` non concede automaticamente Secure Token, sblocco FileVault, autorizzazioni TCC o privilegi superiori alle limitazioni del runner. Non sono aggiunti sudo senza password al nuovo account, modifiche dirette al database TCC o disabilitazioni di SIP/Gatekeeper.
 
-**Parsec is pre-installed** on all sessions for optional use. If you prefer Parsec's lower latency:
+**Primo accesso RustDesk:** il servizio viene avviato e configurato, ma uno schermo e un ID non dimostrano che cattura schermo e controllo tastiera funzionino. Se l'immagine del runner richiede un consenso interattivo prima del primo accesso, il workflow non puo garantirne il superamento. In quel caso serve un Mac/runner controllato da te, con i consensi gia concessi; creare un altro admin non risolve quel vincolo.
 
-1. Connect via RustDesk first
-2. Open **Parsec** from Applications
-3. Log in with your Parsec account
-4. When prompted for permissions (Input Monitoring, Screen Recording):
-   - **User:** `yourname` (the admin user created by the workflow)
-   - **Password:** Use the macOS password from the credentials file
-5. Enable hosting in Parsec settings
-6. Connect from your other device!
+## Protezioni e limiti di riservatezza
 
-> ℹ️ The workflow creates a dedicated admin user (`yourname`) that appears in Users & Groups and can authenticate in Privacy & Security dialogs.
+- Credenziali generate con un generatore crittografico; ID e password consegnati soltanto tramite cifratura a chiave pubblica. La chiave privata non raggiunge il runner.
+- File temporanei in `RUNNER_TEMP`, permessi `700` sulle directory e `600` sui file. Nessuna password in `GITHUB_ENV`, `GITHUB_OUTPUT`, summary, cache o artifact in chiaro. Il JSON temporaneo viene rimosso dopo la cifratura.
+- RustDesk richiede la password permanente; accesso tramite solo clic, password temporanea, discovery LAN, server diretto, tunnel e terminale sono disattivati. Le impostazioni RustDesk vengono verificate tramite CLI prima di pubblicare l'artifact. Nessun dump dei file TOML o dei processi nei log.
+- Token Actions con solo `contents: read`, checkout senza credenziali persistenti, action fissate a SHA e nessuna esecuzione su pull request. Nessuna rotazione IP, telemetria IP o cache della cronologia.
+- Nessuna porta VNC/SSH aggiuntiva viene abilitata. I vecchi workflow VNC e auto-chain sono rimossi per eliminare altri percorsi che pubblicavano credenziali.
+- Cleanup finale al meglio delle possibilita, anche dopo errori. In caso di terminazione forzata puo non essere eseguito: la distruzione del runner ospitato resta il confine finale della sessione. Non usare questo script su un Mac personale o un runner persistente senza adattarne il ciclo di vita.
 
----
+**Non esiste una garanzia di riservatezza assoluta.** GitHub e il provider della VM, processi con privilegi root, software installato o chi puo modificare il workflow possono accedere ai dati durante la sessione. Le CLI di sistema e RustDesk richiedono brevemente password negli argomenti dei processi locali: l'output viene catturato e mai stampato. Il masking e una difesa aggiuntiva, non il confine di sicurezza.
 
-## 📊 Runner Sizes
+Chi legge soltanto la repo riceve il codice e l'artifact cifrato, senza ottenere per questo il desktop. Chi puo scrivere codice fidato puo invece cambiare il destinatario o esfiltrare dati: limita i collaboratori, proteggi il branch predefinito e verifica modifiche a script/workflow e `AGE_RECIPIENT`. Non eseguire codice di PR sconosciute nella sessione in cui accedi ai tuoi account. Per dati personali sensibili scegli un Mac dedicato sotto il tuo controllo. Usa account di sviluppo e MFA; evita la sincronizzazione del profilo browser personale.
 
-| Tier | Runner | vCPUs | RAM | Arch | Chip | Plans |
-|------|--------|-------|-----|------|------|-------|
-| **Standard** | `macos-{version}` | 3 | 7 GB | arm64 | M1 | Free, Pro, Team, Enterprise |
-| **Intel** | `macos-26-intel` | 4 | 14 GB | x64 | Intel Xeon | Free, Pro, Team, Enterprise |
-| **Large** | `macos-{version}-large` | 12 | 30 GB | arm64 (14/15) / x64 (26) | M1 Pro / Intel | Team, Enterprise |
-| **XLarge** | `macos-{version}-xlarge` | 24 (14/15) / 5+8GPU (26) | 70 GB (14/15) / 14 GB (26) | arm64 | M1 Max / M2 | Enterprise |
+La cifratura protegge la consegna delle credenziali, non nasconde i dati all'host o ai software della sessione. Le cancellazioni non garantiscono una sovrascrittura fisica sicura del disco virtuale.
 
-> ⚠️ **Important:** macOS 26 (Tahoe) has **different hardware** than 14/15:
-> - `large` runs on **Intel x64** (not ARM like 14/15)
-> - `xlarge` uses **M2** with 8-core GPU (5 vCPU + 14 GB RAM)
-> - New `intel` tier available — standard Intel x64 runner
-> - The system auto-detects CPU type and downloads the correct binaries
+## Durata, costi e uso consentito
 
----
+I runner standard GitHub-hosted nei repository pubblici non consumano minuti fatturabili, ma **non sono senza limiti**. Un job ospitato dura al massimo 6 ore; questa configurazione limita la sessione a 1–5 ore, lasciando margine per installazione e cleanup. Non concatena automaticamente nuovi job. Non viene promesso un IP dedicato o una sessione persistente. [Billing](https://docs.github.com/en/actions/concepts/billing-and-usage), [limiti](https://docs.github.com/en/actions/reference/limits)
 
-## 🍎 macOS Versions
+L'uso dei runner ospitati deve essere legato alla produzione, ai test, al deployment o alla pubblicazione del progetto associato al repository. Non e un servizio gratuito per un desktop personale permanente. Usalo per sviluppo/test Xcode del progetto e una sola persona per VM. [Termini specifici GitHub Actions](https://docs.github.com/en/site-policy/github-terms/github-terms-for-additional-products-and-features#actions)
 
-| Version | Codename | Status | Notes |
-|---------|----------|--------|-------|
-| **14** | Sonoma | ✅ GA | Default, M1 ARM64 |
-| **15** | Sequoia | ✅ GA | Newer features |
-| **26** | Tahoe | ✅ GA | Latest release, mixed ARM64/Intel (see runner sizes) |
+Sono selezionabili solo runner standard `macos-15` e `macos-26`. Eventuali runner piu grandi richiedono verifica separata di disponibilita e fatturazione.
 
-> 💡 **Tip**: Use macOS 14 for maximum stability. macOS 26 offers new `intel` tier and different hardware configs.
+## Prestazioni e alternative
 
-### Larger Runners (Large/XLarge)
+Non c'e un benchmark eseguito su questa VM che dimostri un vincitore. La latenza dipende da distanza dal datacenter, collegamento diretto o relay, codec, risoluzione e accelerazione video disponibile nel guest. Una VPN non riduce automaticamente la latenza e puo aumentarla.
 
-To use larger runners, your organization needs a **Team** or **Enterprise** GitHub plan.
+| Soluzione | Valutazione per questo progetto |
+|---|---|
+| Chrome Remote Desktop | Comodo per account Google e collegamento dal browser. Installato; registrazione manuale |
+| RustDesk | Primo accesso e recupero; prova qualita orientata alla velocita, risoluzione inferiore e controlla se la connessione passa da relay |
+| Parsec | Candidato da confrontare per fluidita. Installazione opzionale `install_parsec`, disattivata per velocizzare l'avvio; login e consensi manuali. Hosting Mac supportato, prestazioni del guest da verificare |
+| NoMachine | Candidato valido: H.264 e accelerazione hardware Mac supportati. Non e dimostrato piu veloce su questa VM. La versione gratuita via IP richiede raggiungibilita; qui avrebbe senso una rete privata con ACL oppure NoMachine Network (abbonamento). Non viene installato o esposto automaticamente |
+| Sunshine + Moonlight | Progettato per streaming a bassa latenza; supporto macOS sperimentale e accelerazione del guest da verificare. Non incluso come servizio aggiuntivo |
 
-**How to enable larger runners:**
+Per confrontare, usa lo stesso client e la stessa VM, rete e risoluzione (ad esempio 1920×1080), quindi osserva digitazione, scorrimento in Xcode, frame persi e statistiche di rete/codec. Non confondere il ping con l'intera latenza di acquisizione, codifica, trasporto e visualizzazione.
 
-1. Go to **Settings** → **Actions** → **Runners**
-2. Under "Larger runners", configure available runners
-3. `macos-14-large` and `macos-14-xlarge` runners will become available
+Fonti: [Parsec su macOS](https://support.parsec.app/hc/en-us/articles/32381555792148-Install-Parsec-App-on-macOS), [NoMachine e codec](https://kb.nomachine.com/AR10K00706), [NoMachine via IP o Network](https://kb.nomachine.com/AR10Q01053), [Sunshine macOS](https://docs.lizardbyte.dev/projects/sunshine/latest/md_docs_2getting__started.html), [impostazioni RustDesk](https://rustdesk.com/docs/en/self-host/client-configuration/advanced-settings/).
 
-> 💡 **Tip**: Large/XLarge runners are ideal for iOS app compilation, simulators, and heavy tasks.
+## Verifica e manutenzione
 
----
+I controlli locali coprono sintassi Bash/Python/YAML, vincoli del workflow, fallimenti delle CLI e cifratura/decifratura age. Non sostituiscono un test su una vera VM macOS: firma dei pacchetti, launchd, account e consensi TCC devono essere verificati al primo avvio autorizzato. Il workflow non viene lanciato automaticamente da questa modifica.
 
-## 🌐 Unique IP Guarantee
-
-Each session can be configured to have a **guaranteed unique IP address**. This is useful for:
-
-- 🔒 Avoiding IP-based rate limits or bans
-- 🆕 Ensuring each machine/user gets a fresh IP
-- 📊 Tracking which IPs were used by whom
-
-### How It Works
-
-1. **IP Detection**: Every session detects and logs its public IP
-2. **IP History**: IPs are tracked per user and stored in cache
-3. **Duplicate Warning**: System alerts if an IP was previously used
-4. **VPN Rotation**: Enable "Unique IP" to route through Cloudflare WARP for a different IP
-
-### Enable Unique IP
-
-When starting a workflow, set **"Unique IP"** to `true`:
-
-| Option | Description |
-|--------|-------------|
-| `false` (default) | Uses GitHub's default IP (may repeat) |
-| `true` | Routes through Cloudflare WARP VPN for unique IP |
-
-### IP Information in Credentials
-
-The credentials artifact includes:
-
-```
-🌐 Network Information:
-  Public IP:  203.0.113.42
-  Location:   San Francisco, US
-  Provider:   AS13335 Cloudflare
-  WARP VPN:   true
-```
-
-> ⚠️ **Note**: Even with "Unique IP" enabled, Cloudflare WARP IPs come from a shared pool. For truly dedicated IPs, consider using a paid VPN service.
-
----
-
-## 🖥️ macOS VNC (via Tailscale)
-
-Access a full macOS desktop remotely using **VNC (Screen Sharing) over Tailscale**. No port forwarding or public IP required.
-
-### Prerequisites
-
-1. **Tailscale Account** — Create one at [tailscale.com](https://tailscale.com)
-2. **Tailscale Auth Key** — Generate a reusable auth key at [admin/settings/keys](https://login.tailscale.com/admin/settings/keys)
-3. **GitHub Secret** — Add the auth key as `TAILSCALE_AUTH_KEY` in your repository secrets
-4. **VNC Client** — Built-in on macOS (Screen Sharing), or use RealVNC/TightVNC on Windows/Linux
-
-### Setup Tailscale Secret
-
-```bash
-# Using GitHub CLI
-gh secret set TAILSCALE_AUTH_KEY --repo your-username/github-mac-remote
-```
-
-Or go to **Settings** → **Secrets and variables** → **Actions** → **New repository secret**.
-
-### Start a VNC Session
-
-1. Go to **Actions** → **"🖥️ macOS VNC Session (Tailscale)"**
-2. Click **"Run workflow"**
-3. Configure:
-   - **macOS Version**: 14 (Sonoma), 15 (Sequoia), or 26 (Tahoe)
-   - **Runner Size**: Standard, Large, XLarge, or Intel (macOS 26 only)
-   - **Duration**: Session time (1-6 hours)
-4. Click **"Run workflow"**
-
-### Connect via VNC
-
-1. **Install Tailscale** on your device: [tailscale.com/download](https://tailscale.com/download)
-2. **Join the same Tailscale network** (sign in with the same account)
-3. Download the **artifact** `vnc-credentials-<your-username>-<run-id>` from the Summary tab
-4. Open your VNC client:
-   - **macOS**: Finder → Go → Connect to Server → `vnc://<tailscale-ip>:5900`
-   - **Windows**: Use RealVNC or TightVNC → `<tailscale-ip>:5900`
-   - **Linux**: Use Remmina or `vncviewer` → `<tailscale-ip>:5900`
-5. Enter the **Username** and **Password** from the credentials file
-6. **Connected!** 🎉
-
-### How It Works
-
-```
-1. GitHub Actions starts a macOS runner (Apple Silicon or Intel)
-   ↓
-2. macOS Screen Sharing (VNC) is enabled via kickstart
-   ↓
-3. A VNC password is set and an admin user is created
-   ↓
-4. Tailscale is installed and connects to your tailnet
-   ↓
-5. VNC is verified accessible on port 5900
-   ↓
-6. Credentials saved to private artifact
-   ↓
-7. Connect from any device on the same Tailscale network
-```
-
-> 🔒 **Security**: The VNC connection is tunneled through Tailscale's encrypted mesh network. No ports are exposed to the public internet.
-
-> ⚠️ **Note**: On macOS 14+, VNC remote enablement may result in **view-only access** due to system restrictions. For full interactive control, macOS 14 Standard runner is recommended.
----
-
-## ⏱️ Time Limits
-
-| Plan | Minutes/month | Max per session |
-|------|---------------|-----------------|
-| **Free** | 2,000 min | 6 hours |
-| **Pro** | 3,000 min | 6 hours |
-| **Team** | 3,000 min | 6 hours |
-| **Enterprise** | Custom | 6 hours |
-
-> ⚠️ **Important**: macOS runners consume minutes at a **10x rate** on Free/Pro plans.
-> Example: 1 hour of use = 10 minutes consumed from quota.
-
-### Extended Sessions (>6 hours)
-
-Use the **"🔗 Extended Mac Session"** workflow for longer sessions:
-
-1. Set `max_chains` (max 3 = 18 hours total)
-2. System automatically starts new session before timeout
-3. New credentials are generated for each chain
-4. ~30 seconds downtime between chains
-
----
-
-## 🦀 Why RustDesk?
-
-We tested several remote access options. Only **RustDesk** works reliably on GitHub Actions VMs:
-
-| Method | Status | Reason |
-|--------|--------|--------|
-| **RustDesk** | ✅ Works | Uses its own screen capture method |
-| VNC | ❌ Doesn't work | Screen Sharing blocked on VMs |
-| Parsec (auto) | ❌ Doesn't work | Requires GUI permissions unavailable on VMs |
-| Parsec (manual) | ✅ Works | Can be configured manually via RustDesk |
-
-### RustDesk Advantages
-
-- ✅ **No tunnel setup** - Uses relay servers automatically
-- ✅ **No account needed** - Just ID and password
-- ✅ **Cross-platform** - Windows, macOS, Linux, iOS, Android
-- ✅ **Low latency** - Optimized for remote control
-- ✅ **Open source** - Free with no vendor lock-in
-- ✅ **Audio and file transfer** - Advanced features included
-
----
-
-## 🔐 Security & Privacy
-
-This project was built with **security in mind**, especially for multi-user environments.
-
-### 🛡️ Credential Protection
-
-| Feature | Implementation |
-|---------|----------------|
-| **Masked Passwords** | Uses `::add-mask::` - passwords NEVER appear in logs |
-| **Private Artifact** | Credentials saved in downloadable artifact, not in logs |
-| **User Identification** | Artifact named with initiating user: `credentials-<user>-<run-id>` |
-| **Dedicated Admin User** | Creates `yourname` admin user for Privacy & Security dialogs |
-| **Ephemeral Session** | Everything is destroyed when workflow ends |
-| **Unique Credentials** | Each session generates new ID and passwords |
-
-### 🔒 User Isolation
-
-In repositories with multiple collaborators:
-
-- **Each user** can identify their own artifact by name
-- **Passwords don't leak** in public workflow logs
-- **Sessions are independent** - each run has unique credentials
-
-### 📋 Security Flow
-
-```
-1. User starts workflow
-   ↓
-2. Admin user 'yourname' created with UID >= 501 (visible in GUI)
-   ↓
-3. macOS password generated for admin user (12 alphanumeric characters)
-   ↓
-4. RustDesk password generated (12 alphanumeric characters)
-   ↓
-5. Both passwords masked with ::add-mask:: (won't appear in any log)
-   ↓
-6. Credentials saved to file inside artifact
-   ↓
-7. Artifact named: credentials-{user}-{run_id}
-   ↓
-8. Only those with repository access can download artifacts
-```
-
-### ⚠️ Considerations
-
-| Scenario | Security Level |
-|----------|----------------|
-| **Private Repository** | 🟢 High - Only collaborators see artifacts |
-| **Public Repository** | 🟡 Medium - Anyone can download artifacts |
-| **Org with multiple members** | 🟢 High - Each downloads only their artifact |
-
-### 📌 Recommendations
-
-1. **Use a private repository** for maximum security
-2. **Don't share** the credentials file
-3. **Sessions are temporary** - credentials expire when workflow ends
-4. **For organizations**: Each member should only download artifacts with their name
-
----
-
-## 📁 Project Structure
-
-```
-.
-├── .github/
-│   └── workflows/
-│       ├── rustdesk-session.yml   # RustDesk Mac session (main)
-│       ├── extended-session.yml   # Mac session with chaining
-│       └── vnc-session.yml        # macOS VNC session (Tailscale)
-├── scripts/
-│   ├── setup-rustdesk.sh         # Configures RustDesk
-│   ├── install-parsec.sh         # Installs Parsec (optional)
-│   ├── keep-alive.sh             # Keeps session active
-│   ├── system-info.sh            # System information
-│   ├── ip-manager.sh             # IP detection and tracking
-│   └── setup-warp.sh             # Cloudflare WARP VPN setup
-├── configs/
-│   └── hardware-tiers.json       # Hardware configurations
-└── README.md
-```
-
----
-
-## ❓ Troubleshooting
-
-### "RustDesk won't connect"
-
-1. Check if the workflow is still on the "Keep Session Alive" step
-2. Confirm the ID and password are correct
-3. Test your internet connection
-4. Wait a few seconds and try again
-
-### "Session ended early"
-
-1. GitHub has a maximum 6h timeout per job
-2. Use "Extended Session" for longer sessions
-3. Check if keep-alive is generating output in logs
-
-### "Black screen or unresponsive"
-
-1. Wait a few seconds - the VM may be initializing
-2. Try moving the mouse or pressing a key
-3. If it persists, cancel and start a new session
-
-### "Large/XLarge runners not showing"
-
-1. Check if your organization has a Team or Enterprise plan
-2. Configure larger runners in Settings → Actions → Runners
-3. Runners need to be enabled for the repository
-
-### "Parsec permissions not working"
-
-1. When the authentication dialog appears, use:
-   - **User:** `yourname` (not Anka or runner)
-   - **Password:** The macOS password from the credentials file
-2. The user `yourname` should appear in Users & Groups as an Admin
-3. If the user doesn't appear, the workflow may have failed - check the logs
-
----
-
-## ⚖️ Responsible Use
-
-This project is for **legitimate development and testing**:
-
-- ✅ Testing iOS/macOS apps
-- ✅ Occasional development work
-- ✅ CI/CD requiring macOS environment
-- ✅ Swift/Xcode project compilation
-- ❌ 24/7 usage (use MacStadium for that)
-- ❌ Mining or abusive workloads
-
-⚠️ GitHub may suspend accounts that abuse resources.
-
----
-
-## 🔧 Advanced Configuration
-
-### Credentials Included
-
-Each session provides two sets of credentials in the artifact:
-
-| Credential | Purpose |
-|------------|---------|
-| **macOS Admin User (`yourname`)** | System authentication (Privacy & Security, app installs) |
-| **RustDesk ID + Password** | Remote desktop connection |
-
-> 💡 The admin user `yourname` is created specifically to authenticate in GUI dialogs. It appears in Users & Groups alongside the default Anka user.
-
-### Environment Variables
-
-Workflows use these variables:
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `SESSION_DURATION` | Duration in hours | 2 |
-| `MACOS_VERSION` | macOS version (14, 15, 26) | 14 |
-| `CURRENT_IP` | Public IP address of the session | Auto-detected |
-| `IP_CITY` | City location of the IP | Auto-detected |
-| `IP_COUNTRY` | Country of the IP | Auto-detected |
-| `WARP_ENABLED` | Whether Cloudflare WARP VPN is active | false |
-| `IP_IS_DUPLICATE` | Whether this IP was used before | false |
-| `RUSTDESK_PASSWORD` | RustDesk password (auto-generated) | Random |
-| `MAC_PASSWORD` | macOS user password (auto-generated) | Random |
-| `TAILSCALE_IP` | Tailscale IP for VNC connection | Auto-assigned |
-| `VNC_PASSWORD` | VNC password (auto-generated) | Random |
-
-### Customization
-
-To customize behavior, edit the workflow at `.github/workflows/rustdesk-session.yml`.
-
----
-
-## 📄 License
-
-MIT License - Use freely, but at your own risk.
-
----
-
-## 🙏 Credits
-
-- **GitHub Actions** - Runner infrastructure
-- **RustDesk** - Open-source remote desktop software
-- **Parsec** - Low-latency game streaming technology
-- **Tailscale** - Secure mesh VPN for VNC connections
-
----
-
-<p align="center">
-  <b>Made with ❤️ for the community</b><br>
-  <sub>⭐ Star if this project helped you!</sub>
-</p>
+Per aggiornare RustDesk, aggiorna insieme release e digest in `scripts/setup-rustdesk.sh` e controlla i plist vendorizzati rispetto a `src/platform/privileges_scripts` della stessa release upstream. Chrome, CRD e Parsec provengono dagli URL ufficiali correnti e passano la verifica della firma/Gatekeeper; non sono byte-per-byte riproducibili. age proviene dalla formula Homebrew. I file `configs/rustdesk-*.plist` sono quelli upstream RustDesk 1.5.0, con licenza AGPL-3.0; vedi [licenza upstream](https://github.com/rustdesk/rustdesk/blob/1.5.0/LICENCE).
