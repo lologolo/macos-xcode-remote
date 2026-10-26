@@ -89,6 +89,20 @@ Il workflow controlla che utente console e runner coincidano, che WindowServer e
 
 La sessione grafica del runner deve rimanere aperta. Il cambio utente/logout e l'accesso alla schermata di login non sono supportati da questa modalita; `remoteadmin` rimane disponibile per autenticare i dialoghi nella sessione corrente.
 
+### Evitare di riscrivere l'utente nei dialoghi amministrativi
+
+Nel modulo **Run workflow** puoi selezionare **configure_console_password**. E disattivato per impostazione predefinita. Se attivato su un runner GitHub-hosted, imposta una password casuale per l'account gia aperto nel desktop, verifica che sia gia amministratore e prova l'autenticazione. Le voci **macOS console user** e **macOS console password** vengono aggiunte soltanto al file cifrato. Quando un dialogo propone quell'account puoi lasciare il nome e inserire la sua password. `remoteadmin` rimane disponibile come account aggiuntivo, con password separata.
+
+L'opzione non effettua logout, cambio utente o login automatico, non modifica le regole di autorizzazione e non elimina le richieste di password o i consensi di privacy. Il nome proposto dipende dal singolo dialogo, quindi non e garantito che ogni app preselezioni lo stesso account. Se l'account console non e gia amministratore, la preparazione fallisce: non lo promuove automaticamente. Il reset viene rifiutato sui runner self-hosted e fuori da GitHub Actions.
+
+**Effetto sul portachiavi:** il reset dell'account non cambia la password di un portachiavi login gia presente. Questo puo impedirne lo sblocco automatico o generare richieste della vecchia password. Il workflow non cancella ne resetta il portachiavi, non tenta di ricavarne la password e non modifica Secure Token/FileVault. Se dipendi da certificati o credenziali preesistenti nel portachiavi, lascia l'opzione disattivata e usa `remoteadmin`. [Guida Apple sul portachiavi](https://support.apple.com/en-gb/guide/keychain-access/kyca2429/mac)
+
+### Si possono preattivare tutti gli switch di privacy?
+
+Non con un comando supportato che conceda entrambi i permessi su questo runner. Registrazione schermo richiede il consenso dell'utente; anche i profili PPPC non la possono concedere silenziosamente. Accessibilita puo essere gestita tramite PPPC/MDM su Mac gestiti, ma questo progetto non iscrive il runner a un MDM. `tccutil` non e un comando per concedere questi permessi. Apriamo la procedura ufficiale; non modifichiamo TCC.db e non disabilitiamo SIP. [Policy PPPC Apple](https://support.apple.com/en-gb/guide/deployment/dep38df53c2a/web)
+
+Su un Mac sotto il tuo controllo e possibile configurare un account per il login automatico, ma quel login avviene all'avvio. Qui il workflow parte dopo l'apertura della sessione del runner e crea l'account aggiuntivo in quel momento. Un cambio di sessione potrebbe perdere il contesto grafico/TCC di RustDesk e richiedere nuovamente i consensi; non e una sostituzione affidabile per l'opzione delle credenziali console. [Login automatico secondo Apple](https://support.apple.com/en-gb/102316)
+
 ## Protezioni e limiti di riservatezza
 
 - Credenziali generate con un generatore crittografico; ID e password consegnati soltanto tramite cifratura a chiave pubblica. La chiave privata non raggiunge il runner.
