@@ -136,6 +136,53 @@ class ChromePreparationTests(unittest.TestCase):
 
 
 class AdminTests(unittest.TestCase):
+    def test_console_password_option_does_nothing_by_default(self):
+        mod = module("create-admin")
+        data = {}
+        with patch.dict(os.environ, {"CONFIGURE_CONSOLE_PASSWORD": "false"}), \
+             patch.object(mod, "run") as command:
+            mod.configure_console_credentials(data)
+        command.assert_not_called()
+        self.assertEqual(data, {})
+
+    def test_console_password_reset_rejects_self_hosted_runner(self):
+        mod = module("create-admin")
+        with patch.dict(os.environ, {"CONFIGURE_CONSOLE_PASSWORD": "true", "GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "self-hosted"}), \
+             patch.object(mod, "run") as command, self.assertRaises(RuntimeError):
+            mod.configure_console_credentials({})
+        command.assert_not_called()
+
+    def test_console_password_does_not_promote_non_admin(self):
+        mod = module("create-admin")
+        env = {"CONFIGURE_CONSOLE_PASSWORD": "true", "GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"}
+        with patch.dict(os.environ, env), patch.object(mod, "console_identity", return_value="runner"), \
+             patch.object(mod, "run", return_value=subprocess.CompletedProcess([], 0, stdout="no")) as command, \
+             self.assertRaises(RuntimeError):
+            mod.configure_console_credentials({})
+        self.assertEqual(len(command.call_args_list), 1)
+
+    def test_console_password_is_verified_and_recorded_for_encryption(self):
+        mod = module("create-admin")
+        env = {"CONFIGURE_CONSOLE_PASSWORD": "true", "GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"}
+        data = {}
+        with patch.dict(os.environ, env), patch.object(mod, "console_identity", return_value="runner"), \
+             patch.object(mod, "run", return_value=subprocess.CompletedProcess([], 0, stdout="yes")) as command, \
+             patch.object(mod.secrets, "token_hex", return_value="CONSOLE-SENTINEL"), contextlib.redirect_stdout(io.StringIO()):
+            mod.configure_console_credentials(data)
+        self.assertEqual(data, {"console_user": "runner", "console_password": "CONSOLE-SENTINEL"})
+        self.assertEqual(command.call_args_list[1].args, ("sudo", "-n", "dscl", ".", "-passwd", "/Users/runner", "CONSOLE-SENTINEL"))
+        self.assertEqual(command.call_args_list[2].args, ("dscl", ".", "-authonly", "runner", "CONSOLE-SENTINEL"))
+
+    def test_failed_console_authentication_does_not_publish_credentials(self):
+        mod = module("create-admin")
+        env = {"CONFIGURE_CONSOLE_PASSWORD": "true", "GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"}
+        data = {}
+        calls = [subprocess.CompletedProcess([], 0, stdout="yes"), subprocess.CompletedProcess([], 0), RuntimeError("auth failed")]
+        with patch.dict(os.environ, env), patch.object(mod, "console_identity", return_value="runner"), \
+             patch.object(mod, "run", side_effect=calls), contextlib.redirect_stdout(io.StringIO()), self.assertRaises(RuntimeError):
+            mod.configure_console_credentials(data)
+        self.assertNotIn("console_password", data)
+
     def test_creation_failure_is_not_ignored(self):
         mod = module("create-admin")
         with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {"STATE_DIR": temp}), \
@@ -237,6 +284,21 @@ class EncryptionTests(unittest.TestCase):
         self.assertFalse(list((self.state / "public").iterdir()))
         self.assertNotIn("MAC-SENTINEL", result.stdout + result.stderr)
         self.assertNotIn("RD-SENTINEL", result.stdout + result.stderr)
+
+    def test_console_credentials_are_in_ciphertext_only(self):
+        data = json.loads(self.source.read_text())
+        data.update(console_user="runner", console_password="CONSOLE-SENTINEL")
+        self.source.write_text(json.dumps(data))
+        result = self.execute()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        target = self.state / "public" / "connection-info.txt.age"
+        self.assertNotIn(b"CONSOLE-SENTINEL", target.read_bytes())
+        self.assertNotIn("CONSOLE-SENTINEL", result.stdout + result.stderr)
+        plain = subprocess.run(["age", "-d", "-i", str(self.key), str(target)], capture_output=True, check=True).stdout
+        self.assertIn(b"macOS console user: runner", plain)
+        self.assertIn(b"macOS console password: CONSOLE-SENTINEL", plain)
+        self.assertIn(b"macOS administrator: remoteadmin", plain)
+        self.assertFalse(self.source.exists())
 
 
 class WorkflowTests(unittest.TestCase):

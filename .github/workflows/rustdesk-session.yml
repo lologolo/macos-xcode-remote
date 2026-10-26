@@ -17,6 +17,10 @@ on:
         description: 'Also install Parsec for a manual comparison'
         type: boolean
         default: false
+      configure_console_password:
+        description: 'Set a password for the current GUI admin (may desynchronize its existing login keychain)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -41,6 +45,7 @@ jobs:
     env:
       SESSION_DURATION: ${{ inputs.duration }}
       AGE_RECIPIENT: ${{ vars.AGE_RECIPIENT }}
+      CONFIGURE_CONSOLE_PASSWORD: ${{ inputs.configure_console_password }}
       HOMEBREW_NO_AUTO_UPDATE: '1'
       HOMEBREW_NO_ANALYTICS: '1'
 

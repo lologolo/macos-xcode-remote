@@ -89,7 +89,7 @@ def main():
     open_wizard(native_host, state)
     print("Google Host registered in the console session. Complete Google's Accessibility and Screen Recording wizard through RustDesk.")
     print("Then return to remotedesktop.google.com/access and finish registration with your Google account and PIN.")
-    print("When macOS asks for an administrator, use remoteadmin and the macOS password from your decrypted file.")
+    print("When macOS asks for an administrator, use your decrypted file: console credentials if enabled, otherwise remoteadmin and its macOS password.")
     print("This preparation does not confirm Google enrollment or a successful remote connection.")
 
 

@@ -13,4 +13,6 @@ Questo test richiede un job ospitato macOS reale. I test locali con CLI simulate
 9. Annulla il job. Verifica l'esecuzione del cleanup quando consentita da Actions e la disconnessione dei client al termine del runner. Rimuovi il dispositivo CRD di test dal tuo account Google e revoca eventuali sessioni di test.
 10. Una seconda esecuzione deve avere nuove credenziali e nuovo account. Nessun profilo browser, token Google o dato personale deve essere ripristinato da cache/artifact. Elimina il file di connessione decifrato dal tuo PC quando non serve.
 
+Per provare `configure_console_password`, selezionalo solo su un nuovo job GitHub-hosted senza dati personali/certificati gia caricati: verifica le credenziali console nel file decifrato, l'autenticazione nei dialoghi senza sostituire il nome quando coincide, e la continuita di RustDesk. Verifica separatamente eventuali richieste del portachiavi: questa opzione non ne cambia la password. Con opzione disattivata non deve essere eseguito alcun reset dell'account console. Nessun test deve effettuare logout o attivare il login automatico.
+
 Se Google cambia firma, formato DMG o identificativo del pacchetto, il relativo step deve segnalare il fallimento, mantenendo il canale RustDesk per il recupero. Non rimuovere i controlli di firma per far proseguire l'installazione.

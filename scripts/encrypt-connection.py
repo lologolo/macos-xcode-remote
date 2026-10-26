@@ -10,10 +10,21 @@ def main():
     state = Path(os.environ["STATE_DIR"])
     source = state / "credentials.json"
     data = json.loads(source.read_text(encoding="utf-8"))
+    console_info = ""
+    if data.get("console_user") and data.get("console_password"):
+        console_info = (
+            "CURRENT GUI ACCOUNT (for dialogs that prefill the logged-in user):\n"
+            f"macOS console user: {data['console_user']}\n"
+            f"macOS console password: {data['console_password']}\n"
+            "Keep the current GUI session open; use this password when that account is prefilled.\n"
+            "The existing login keychain may retain its previous password.\n\n"
+        )
     text = (
         f"Run: {os.environ['GITHUB_RUN_ID']} / attempt {os.environ['GITHUB_RUN_ATTEMPT']}\n"
         f"RustDesk ID: {data['rustdesk_id']}\n"
-        f"RustDesk password: {data['rustdesk_password']}\n"
+        f"RustDesk password: {data['rustdesk_password']}\n\n"
+        + console_info +
+        "ADDITIONAL ADMINISTRATOR (also available as a fallback):\n"
         f"macOS administrator: {data['macos_user']}\n"
         f"macOS password: {data['macos_password']}\n\n"
         "Connect with RustDesk. Chrome and Chrome Remote Desktop Host are installed in a later step.\n"
