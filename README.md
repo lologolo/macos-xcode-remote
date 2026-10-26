@@ -48,13 +48,34 @@ Non vengono pubblicati ID RustDesk, password, indirizzi IP, geolocalizzazione, f
 |---|---|
 | RustDesk | Download della release fissata, verifica SHA-256 e firma, avvio diretto dalla sessione grafica del runner e password casuale verificata tramite CLI |
 | Chrome | Installazione dal DMG ufficiale, verifica firma Google e Gatekeeper, apertura della pagina CRD |
-| Chrome Remote Desktop Host | Installazione del pacchetto ufficiale firmato Google |
+| Chrome Remote Desktop Host | Installazione del pacchetto firmato Google, registrazione del LaunchAgent nella sessione GUI corrente e apertura della procedura ufficiale dei consensi |
 | Amministratore aggiuntivo | Creazione di `remoteadmin`, home privata, verifica gruppo admin e autenticazione con password |
 | Account Google e PIN CRD | Da configurare nella GUI attraverso RustDesk |
 | Accessibilita e registrazione schermo | Consensi macOS da concedere quando richiesti; possono essere limitati dalla VM |
 | Sessione grafica di `remoteadmin` | Non viene effettuato automaticamente il cambio utente; l'account serve anzitutto per autenticare le operazioni amministrative |
 
 In Chrome, accedi a Google, abilita l'accesso remoto, scegli nome e PIN e concedi i permessi richiesti in **Impostazioni di Sistema → Privacy e sicurezza**. Quando compare un dialogo amministrativo, usa `remoteadmin` e la password decifrata. Verifica una connessione CRD da un secondo dispositivo prima di affidarti a quel canale. [Guida ufficiale Google](https://support.google.com/chrome/answer/1649523?hl=it)
+
+### Attivazione dopo il PIN e consensi mancanti
+
+La richiesta macOS di nome utente e password subito dopo il PIN autorizza l'attivazione del servizio. Non e un login al desktop: `remoteadmin` serve per quell'autorizzazione e la sessione grafica rimane quella del runner. Il codice verifica password e gruppo admin, ma questo non dimostra che il servizio Google si sia poi avviato. Non e stato dimostrato che il problema richieda Secure Token o una password diversa.
+
+Il pacchetto installato da `sudo installer` puo non caricare il LaunchAgent nel desktop gia aperto: il postflight upstream, su un'installazione nuova, usa la variabile `USER` quando e diversa da root. Il workflow ora registra esplicitamente il job Google in `gui/<uid>` e apre, come utente console, il native host Google con il parametro upstream `--check-permission`. Non abilita automaticamente i consensi e non modifica TCC.db. L'installer non disabilita i consensi; da solo non garantisce che la procedura venga mostrata nel desktop dell'utente.
+
+Compare sul desktop il collegamento **Chrome Remote Desktop - Permessi.command**: puoi aprirlo per richiamare la preparazione e la procedura ufficiale. Autorizza il componente dell'**accesso permanente** quando richiesto: i controlli Google distinguono questo componente da quello dell'assistenza remota. L'assistenza funzionante non prova che l'accesso permanente sia configurato o abbia gli stessi consensi.
+
+Per una sessione gia avviata con la versione precedente, puoi provare questa riparazione nel **Terminale del Mac remoto**, mantenendo RustDesk aperto. Non richiede un nuovo job e non usa `sudo` per i consensi:
+
+```bash
+launchctl enable "gui/$(id -u)/org.chromium.chromoting"
+launchctl print "gui/$(id -u)/org.chromium.chromoting" >/dev/null 2>&1 || launchctl bootstrap "gui/$(id -u)" /Library/LaunchAgents/org.chromium.chromoting.plist
+CRD_NATIVE_HOST="$(plutil -extract path raw -o - /Library/Google/Chrome/NativeMessagingHosts/com.google.chrome.remote_desktop.json)"
+"$CRD_NATIVE_HOST" --check-permission
+```
+
+Completa la procedura, poi torna a `remotedesktop.google.com/access` e ripeti l'attivazione. Se il componente permanente non compare, cerca nel Finder **Vai → Vai alla cartella** il percorso `/Library/PrivilegedHelperTools/`: nelle versioni correnti il bundle e `ChromeRemoteDesktopHost.app`. Puoi selezionare il componente tramite il pulsante `+` nelle impostazioni di privacy dove disponibile, senza rimuovere i permessi dell'assistenza gia funzionante. I nomi mostrati possono variare con la versione del pacchetto.
+
+Fonti del comportamento: [postflight ufficiale Chromium](https://chromium.googlesource.com/chromium/src/+/main/remoting/host/installer/mac/Scripts/remoting_postflight.sh), [controllo del servizio e autorizzazione amministrativa](https://chromium.googlesource.com/chromium/src/+/main/remoting/host/setup/daemon_controller_delegate_mac.mm), [procedura dei consensi](https://chromium.googlesource.com/chromium/src/+/main/remoting/host/setup/me2me_native_messaging_host_main.cc), [componenti distinti per i consensi](https://chromium.googlesource.com/chromium/src/+/main/remoting/host/mac/permission_checker.cc).
 
 Installare l'Host non equivale a registrarlo sul tuo account Google. Il workflow non tenta di riutilizzare token OAuth o copiare un profilo Chrome. La VM viene ricreata a ogni job: installazione e account macOS sono automatici, ma login Google, registrazione e consensi possono dover essere ripetuti. Non viene promesso un avvio CRD gia autenticato.
 
