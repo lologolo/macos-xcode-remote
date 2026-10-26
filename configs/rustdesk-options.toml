@@ -1,4 +1,4 @@
-# Applied to BOTH root/service and console-user scopes before starting either.
+# Applied to root/CLI and console-user scopes before starting RustDesk.
 # Never accept a click-only connection or a generated temporary password.
 [options]
 approve-mode = 'password'
