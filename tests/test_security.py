@@ -88,6 +88,53 @@ class RustDeskTests(unittest.TestCase):
             self.mod.main()
 
 
+class ChromePreparationTests(unittest.TestCase):
+    def test_existing_gui_job_is_not_bootstrapped_again(self):
+        mod = module("prepare-crd")
+        with patch.object(mod, "launchctl", return_value=0) as command:
+            mod.ensure_job("gui/501", "org.chromium.chromoting", Path("/installed.plist"))
+        self.assertEqual([call.args[0] for call in command.call_args_list], ["enable", "print"])
+        self.assertFalse(any(call.kwargs.get("privileged") for call in command.call_args_list))
+
+    def test_missing_agent_is_registered_in_gui_domain(self):
+        mod = module("prepare-crd")
+        with patch.object(mod, "launchctl", side_effect=[0, 1, 0, 0]) as command:
+            mod.ensure_job("gui/501", "org.chromium.chromoting", Path("/installed.plist"))
+        self.assertEqual(command.call_args_list[2].args, ("bootstrap", "gui/501", str(Path("/installed.plist"))))
+
+    def test_failed_registration_is_reported(self):
+        mod = module("prepare-crd")
+        with patch.object(mod, "launchctl", side_effect=[0, 1, 1, 1]), self.assertRaises(RuntimeError):
+            mod.ensure_job("gui/501", "org.chromium.chromoting", Path("/installed.plist"))
+
+    def test_unexpected_native_host_paths_are_rejected(self):
+        mod = module("prepare-crd")
+        with tempfile.TemporaryDirectory() as temp:
+            manifest = Path(temp) / "manifest.json"
+            for name in ("/tmp/untrusted", "relative-host", "/Library/PrivilegedHelperTools/../untrusted"):
+                manifest.write_text(json.dumps({"name": "com.google.chrome.remote_desktop", "path": name}))
+                with self.assertRaises(RuntimeError):
+                    mod.native_host_path(manifest)
+
+    def test_google_manifest_native_path_is_used_without_guessing_a_filename(self):
+        mod = module("prepare-crd")
+        with tempfile.TemporaryDirectory() as temp:
+            manifest = Path(temp) / "manifest.json"
+            host = "/Library/PrivilegedHelperTools/ChromeRemoteDesktopHost.app/Contents/MacOS/Native Host.app/Contents/MacOS/native_messaging_host"
+            manifest.write_text(json.dumps({"name": "com.google.chrome.remote_desktop", "path": host}))
+            self.assertEqual(mod.native_host_path(manifest).as_posix(), host)
+
+    def test_permission_wizard_runs_without_sudo_and_keeps_output_private(self):
+        mod = module("prepare-crd")
+        with tempfile.TemporaryDirectory() as temp, patch.object(mod.subprocess, "Popen") as process:
+            process.return_value.pid = 123
+            host = Path("/installed-native-host")
+            mod.open_wizard(host, Path(temp))
+            self.assertEqual(process.call_args.args[0], [str(host), "--check-permission"])
+            self.assertEqual(Path(process.call_args.kwargs["stdout"].name).name, "crd-permission-wizard.log")
+            self.assertEqual((Path(temp) / "crd-permission-wizard.pid").read_text(), "123")
+
+
 class AdminTests(unittest.TestCase):
     def test_creation_failure_is_not_ignored(self):
         mod = module("create-admin")

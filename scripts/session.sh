@@ -28,6 +28,8 @@ case "${1:-}" in
     log 'RustDesk started and details encrypted. GUI access still depends on macOS permissions.'
     ;;
   cleanup)
+    launchctl bootout "gui/$(id -u)/org.chromium.chromoting" >/dev/null 2>&1 || true
+    sudo -n launchctl bootout system/org.chromium.chromoting.broker >/dev/null 2>&1 || true
     sudo -n launchctl bootout system/com.carriez.RustDesk_service >/dev/null 2>&1 || true
     sudo -n launchctl bootout "gui/$(id -u)/com.carriez.RustDesk_server" >/dev/null 2>&1 || true
     sudo -n pkill -x RustDesk >/dev/null 2>&1 || true

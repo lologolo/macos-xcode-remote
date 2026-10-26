@@ -43,5 +43,6 @@ MOUNT_CRD=''
 pkgutil --pkg-info com.google.pkg.ChromeRemoteDesktopHost >/dev/null \
   || die 'Chrome Remote Desktop Host receipt missing after installation.'
 
+python3 "$SCRIPT_DIR/prepare-crd.py"
 open -a '/Applications/Google Chrome.app' 'https://remotedesktop.google.com/access' --args --no-first-run >/dev/null 2>&1
-log 'Chrome and Chrome Remote Desktop Host installed. Complete Google registration, PIN and macOS permissions through RustDesk.'
+log 'Chrome and Chrome Remote Desktop Host installed; GUI job registered and official consent wizard launched. Complete permissions, Google registration and PIN through RustDesk.'
