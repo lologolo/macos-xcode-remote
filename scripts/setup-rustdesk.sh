@@ -35,7 +35,7 @@ sudo -n chown -R root:wheel /Applications/RustDesk.app
 hdiutil detach -quiet "$MOUNT"
 MOUNT=''
 
-# Configure password-only access before any service can accept a connection.
+# Configure password-only access before any process can accept a connection.
 USER_CONFIG="$HOME/Library/Preferences/com.carriez.RustDesk"
 ROOT_CONFIG='/var/root/Library/Preferences/com.carriez.RustDesk'
 mkdir -p "$USER_CONFIG"
@@ -45,11 +45,10 @@ sudo -n mkdir -p "$ROOT_CONFIG"
 sudo -n chmod 700 "$ROOT_CONFIG"
 sudo -n install -o root -g wheel -m 600 "$SCRIPT_DIR/../configs/rustdesk-options.toml" "$ROOT_CONFIG/RustDesk2.toml"
 
-# Upstream 1.5.0 launchd definitions, vendored for review rather than fetched at runtime.
-sudo -n install -o root -g wheel -m 644 "$SCRIPT_DIR/../configs/rustdesk-daemon.plist" /Library/LaunchDaemons/com.carriez.RustDesk_service.plist
-sudo -n install -o root -g wheel -m 644 "$SCRIPT_DIR/../configs/rustdesk-agent.plist" /Library/LaunchAgents/com.carriez.RustDesk_server.plist
-sudo -n launchctl bootstrap system /Library/LaunchDaemons/com.carriez.RustDesk_service.plist
-sudo -n launchctl bootstrap "gui/$(id -u)" /Library/LaunchAgents/com.carriez.RustDesk_server.plist
+# The capture process must inherit the runner's GUI/TCC context. Launching it
+# from launchd or through `open` changes that context on some macOS 26 systems.
+bash "$SCRIPT_DIR/start-rustdesk.sh"
 python3 "$SCRIPT_DIR/configure-rustdesk.py"
-open -a /Applications/RustDesk.app >/dev/null 2>&1
+# Keep the GUI in the same process ancestry too; do not use LaunchServices here.
+/Applications/RustDesk.app/Contents/MacOS/RustDesk >"$STATE_DIR/rustdesk-gui.log" 2>&1 &
 log 'RustDesk configured. Screen/input permissions must be supported and granted by macOS.'

@@ -107,6 +107,43 @@ class AdminTests(unittest.TestCase):
         command.assert_not_called()
 
 
+class CaptureStartupTests(unittest.TestCase):
+    def test_capture_inherits_workflow_instead_of_launchd(self):
+        setup = (ROOT / "scripts/setup-rustdesk.sh").read_text()
+        start = (ROOT / "scripts/start-rustdesk.sh").read_text()
+        self.assertIn('"$CLI" --server >"$STATE_DIR/rustdesk-server.log" 2>&1 &', start)
+        self.assertIn('"$CONSOLE_UID" == "$(id -u)"', start)
+        self.assertIn('kill -0 "$SERVER_PID"', start)
+        self.assertNotIn("launchctl bootstrap", setup + start)
+        self.assertNotIn("open -a", setup + start)
+        self.assertNotIn("sudo", '\n'.join(line for line in start.splitlines() if not line.startswith('#')))
+
+    def test_capture_errors_detected_without_disclosing_log_content(self):
+        mod = module("rustdesk-health")
+        with tempfile.TemporaryDirectory() as temp:
+            log = Path(temp) / "server.log"
+            log.write_text("PRIVATE-ID-AND-ADDRESS: Failed to create capturer\n")
+            self.assertIs(mod.capture_error_present([log]), True)
+            log.write_text("PRIVATE-ID-AND-ADDRESS: normal operation\n")
+            self.assertIs(mod.capture_error_present([log]), False)
+            self.assertIs(mod.capture_error_present([Path(temp) / "missing.log"]), False)
+
+    def test_health_warning_never_reprints_private_logs(self):
+        mod = module("rustdesk-health")
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp)
+            (state / "rustdesk-server.pid").write_text("123")
+            (state / "rustdesk-server.log").write_text("PRIVATE-SENTINEL Failed to create capturer")
+            output = io.StringIO()
+            with patch.dict(os.environ, {"STATE_DIR": str(state)}), \
+                 patch.object(mod.os, "kill"), patch.object(mod, "display_count", return_value=0), \
+                 patch.object(mod.Path, "home", return_value=state), contextlib.redirect_stdout(output):
+                mod.main()
+            self.assertIn("no active display", output.getvalue())
+            self.assertIn("screen-capture failure", output.getvalue())
+            self.assertNotIn("PRIVATE-SENTINEL", output.getvalue())
+
+
 @unittest.skipUnless(shutil.which("age") and shutil.which("age-keygen"), "Install age for real crypto tests")
 class EncryptionTests(unittest.TestCase):
     def setUp(self):

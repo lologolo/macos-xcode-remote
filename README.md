@@ -46,7 +46,7 @@ Non vengono pubblicati ID RustDesk, password, indirizzi IP, geolocalizzazione, f
 
 | Operazione | Comportamento |
 |---|---|
-| RustDesk | Download della release fissata, verifica SHA-256 e firma, avvio con launchd e password casuale verificata tramite CLI |
+| RustDesk | Download della release fissata, verifica SHA-256 e firma, avvio diretto dalla sessione grafica del runner e password casuale verificata tramite CLI |
 | Chrome | Installazione dal DMG ufficiale, verifica firma Google e Gatekeeper, apertura della pagina CRD |
 | Chrome Remote Desktop Host | Installazione del pacchetto ufficiale firmato Google |
 | Amministratore aggiuntivo | Creazione di `remoteadmin`, home privata, verifica gruppo admin e autenticazione con password |
@@ -61,6 +61,12 @@ Installare l'Host non equivale a registrarlo sul tuo account Google. Il workflow
 L'appartenenza al gruppo `admin` non concede automaticamente Secure Token, sblocco FileVault, autorizzazioni TCC o privilegi superiori alle limitazioni del runner. Non sono aggiunti sudo senza password al nuovo account, modifiche dirette al database TCC o disabilitazioni di SIP/Gatekeeper.
 
 **Primo accesso RustDesk:** il servizio viene avviato e configurato, ma uno schermo e un ID non dimostrano che cattura schermo e controllo tastiera funzionino. Se l'immagine del runner richiede un consenso interattivo prima del primo accesso, il workflow non puo garantirne il superamento. In quel caso serve un Mac/runner controllato da te, con i consensi gia concessi; creare un altro admin non risolve quel vincolo.
+
+**Connesso, in attesa dell'immagine:** la connessione e stata stabilita, ma il video non arriva. Il processo di cattura viene avviato direttamente come figlio del workflow nella sessione console, senza LaunchAgent/LaunchDaemon: e una correzione della regressione introdotta dal precedente avvio tramite launchd. Su alcuni sistemi macOS 26 e stato segnalato un problema di cattura con quell'avvio; la segnalazione non dimostra da sola la causa su tutte le VM. [Discussione upstream](https://github.com/rustdesk/rustdesk/discussions/15364)
+
+Il workflow controlla che utente console e runner coincidano, che WindowServer e il processo RustDesk siano attivi, risveglia il display e segnala errori di cattura riconosciuti con messaggi fissi. Non acquisisce screenshot e non pubblica log grezzi. Questi controlli non sono una prova di consegna del primo fotogramma: serve una connessione dal client. Se il problema persiste, prova dal client un codec software come VP9 o disattiva il codec hardware, e verifica i consensi macOS attraverso un canale gia disponibile. [Guida ufficiale RustDesk](https://rustdesk.com/blog/rustdesk-connected-waiting-for-image/)
+
+La sessione grafica del runner deve rimanere aperta. Il cambio utente/logout e l'accesso alla schermata di login non sono supportati da questa modalita; `remoteadmin` rimane disponibile per autenticare i dialoghi nella sessione corrente.
 
 ## Protezioni e limiti di riservatezza
 
@@ -103,6 +109,6 @@ Fonti: [Parsec su macOS](https://support.parsec.app/hc/en-us/articles/3238155579
 
 ## Verifica e manutenzione
 
-I controlli locali coprono sintassi Bash/Python/YAML, vincoli del workflow, fallimenti delle CLI e cifratura/decifratura age. Non sostituiscono un test su una vera VM macOS: firma dei pacchetti, launchd, account e consensi TCC devono essere verificati al primo avvio autorizzato. Il workflow non viene lanciato automaticamente da questa modifica.
+I controlli locali coprono sintassi Bash/Python/YAML, vincoli del workflow, fallimenti delle CLI, diagnostica senza esposizione dei log e cifratura/decifratura age. Non sostituiscono un test su una vera VM macOS: firma dei pacchetti, avvio nella sessione grafica, account e consensi TCC devono essere verificati al primo avvio autorizzato. Il workflow non viene lanciato automaticamente da questa modifica.
 
-Per aggiornare RustDesk, aggiorna insieme release e digest in `scripts/setup-rustdesk.sh` e controlla i plist vendorizzati rispetto a `src/platform/privileges_scripts` della stessa release upstream. Chrome, CRD e Parsec provengono dagli URL ufficiali correnti e passano la verifica della firma/Gatekeeper; non sono byte-per-byte riproducibili. age proviene dalla formula Homebrew. I file `configs/rustdesk-*.plist` sono quelli upstream RustDesk 1.5.0, con licenza AGPL-3.0; vedi [licenza upstream](https://github.com/rustdesk/rustdesk/blob/1.5.0/LICENCE).
+Per aggiornare RustDesk, aggiorna insieme release e digest in `scripts/setup-rustdesk.sh` e verifica che le CLI continuino a raggiungere il processo `--server` dell'utente console. Chrome, CRD e Parsec provengono dagli URL ufficiali correnti e passano la verifica della firma/Gatekeeper; non sono byte-per-byte riproducibili. age proviene dalla formula Homebrew.
