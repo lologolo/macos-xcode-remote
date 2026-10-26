@@ -1,300 +1,55 @@
 #!/bin/bash
-# setup-rustdesk.sh - Install and configure RustDesk for remote access
-# RustDesk is an open-source remote desktop similar to TeamViewer/AnyDesk
+set +x
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/common.sh"
+init_paths
+[[ -f "$STATE_DIR/credentials.json" ]] || die 'Create the session credentials first.'
 
-set -e
-
-RUSTDESK_VERSION="${RUSTDESK_VERSION:-1.3.7}"
-RUSTDESK_PASSWORD="${RUSTDESK_PASSWORD:-}"
-
-echo "🦀 Setting up RustDesk v${RUSTDESK_VERSION}..."
-
-# Generate password if not provided
-if [ -z "${RUSTDESK_PASSWORD}" ]; then
-    RUSTDESK_PASSWORD=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 12)
-    echo "RUSTDESK_PASSWORD=${RUSTDESK_PASSWORD}" >> $GITHUB_ENV
-fi
-
-# Detect CPU architecture
-ARCH=$(uname -m)
-echo "🖥️ Detected architecture: ${ARCH}"
-
-if [ "$ARCH" = "arm64" ]; then
-    RUSTDESK_ARCH="aarch64"
-elif [ "$ARCH" = "x86_64" ]; then
-    RUSTDESK_ARCH="x86_64"
-else
-    echo "⚠️ Unknown architecture: ${ARCH}, defaulting to aarch64"
-    RUSTDESK_ARCH="aarch64"
-fi
-
-# Download RustDesk for the correct architecture
-echo "📦 Downloading RustDesk for ${RUSTDESK_ARCH}..."
-RUSTDESK_DMG="/tmp/rustdesk.dmg"
-RUSTDESK_URL="https://github.com/rustdesk/rustdesk/releases/download/${RUSTDESK_VERSION}/rustdesk-${RUSTDESK_VERSION}-${RUSTDESK_ARCH}.dmg"
-
-echo "   URL: ${RUSTDESK_URL}"
-curl -L "${RUSTDESK_URL}" -o "${RUSTDESK_DMG}" --progress-bar
-
-# Verify download
-FILE_SIZE=$(stat -f%z "${RUSTDESK_DMG}" 2>/dev/null || stat --printf="%s" "${RUSTDESK_DMG}" 2>/dev/null || echo "0")
-echo "   Downloaded: ${FILE_SIZE} bytes"
-
-if [ "${FILE_SIZE}" -lt 1000000 ]; then
-    echo "❌ Download failed - file too small (${FILE_SIZE} bytes)"
-    echo "   Content of downloaded file:"
-    head -c 500 "${RUSTDESK_DMG}" || true
-    exit 1
-fi
-
-echo "✅ Download complete (${FILE_SIZE} bytes)"
-
-# Mount DMG
-echo "📦 Mounting DMG..."
-hdiutil attach "${RUSTDESK_DMG}" -nobrowse -quiet || {
-    echo "⚠️ First mount attempt failed, retrying..."
-    sleep 2
-    hdiutil attach "${RUSTDESK_DMG}" -nobrowse -quiet -force
+# Explicit release and independently checked GitHub release asset digests.
+VERSION=1.5.0
+case "$(uname -m)" in
+  arm64) ARCH=aarch64; DIGEST=3929b0a4321e7d0f561a317059798be882d65decc59681eb77061f8efe56fbf4 ;;
+  x86_64) ARCH=x86_64; DIGEST=1ca3cbfbe7f2bd28b50c93fcd50d4a0b671dc76d18be27cea99d3a65767eb526 ;;
+  *) die 'Unsupported CPU architecture.' ;;
+esac
+WORKDIR="$(mktemp -d "$STATE_DIR/rustdesk.XXXXXX")"
+MOUNT=''
+cleanup() {
+  if [[ -n "$MOUNT" ]]; then hdiutil detach -quiet "$MOUNT" >/dev/null 2>&1 || true; fi
+  rm -rf -- "$WORKDIR"
 }
+trap cleanup EXIT
+log "Installing verified RustDesk $VERSION ($ARCH)."
+download "https://github.com/rustdesk/rustdesk/releases/download/$VERSION/rustdesk-$VERSION-$ARCH.dmg" "$WORKDIR/rustdesk.dmg"
+printf '%s  %s\n' "$DIGEST" "$WORKDIR/rustdesk.dmg" | shasum -a 256 -c - >/dev/null \
+  || die 'RustDesk download checksum mismatch.'
+MOUNT="$WORKDIR/mount"
+mkdir "$MOUNT"
+hdiutil attach -quiet -nobrowse -readonly -mountpoint "$MOUNT" "$WORKDIR/rustdesk.dmg"
+[[ -d "$MOUNT/RustDesk.app" ]] || die 'RustDesk app missing from image.'
+codesign --verify --deep --strict "$MOUNT/RustDesk.app" >/dev/null 2>&1 || die 'Invalid RustDesk code signature.'
+spctl --assess --type execute "$MOUNT/RustDesk.app" >/dev/null 2>&1 || die 'Gatekeeper rejected RustDesk.'
+sudo -n ditto "$MOUNT/RustDesk.app" /Applications/RustDesk.app
+sudo -n chown -R root:wheel /Applications/RustDesk.app
+hdiutil detach -quiet "$MOUNT"
+MOUNT=''
 
-sleep 3
+# Configure password-only access before any service can accept a connection.
+USER_CONFIG="$HOME/Library/Preferences/com.carriez.RustDesk"
+ROOT_CONFIG='/var/root/Library/Preferences/com.carriez.RustDesk'
+mkdir -p "$USER_CONFIG"
+chmod 700 "$USER_CONFIG"
+install -m 600 "$SCRIPT_DIR/../configs/rustdesk-options.toml" "$USER_CONFIG/RustDesk2.toml"
+sudo -n mkdir -p "$ROOT_CONFIG"
+sudo -n chmod 700 "$ROOT_CONFIG"
+sudo -n install -o root -g wheel -m 600 "$SCRIPT_DIR/../configs/rustdesk-options.toml" "$ROOT_CONFIG/RustDesk2.toml"
 
-# Find and install RustDesk
-echo "📦 Installing RustDesk..."
-RUSTDESK_VOL=$(ls -d /Volumes/RustDesk* 2>/dev/null | head -1)
-
-if [ -z "$RUSTDESK_VOL" ]; then
-    echo "⚠️ Looking for alternative volume names..."
-    ls -la /Volumes/
-    RUSTDESK_VOL=$(ls -d /Volumes/*ustdesk* 2>/dev/null | head -1)
-fi
-
-if [ -n "$RUSTDESK_VOL" ]; then
-    echo "   Found volume: $RUSTDESK_VOL"
-    ls -la "$RUSTDESK_VOL/"
-    
-    if [ -d "$RUSTDESK_VOL/RustDesk.app" ]; then
-        cp -R "$RUSTDESK_VOL/RustDesk.app" /Applications/
-    elif [ -d "$RUSTDESK_VOL"/*.app ]; then
-        cp -R "$RUSTDESK_VOL"/*.app /Applications/
-    fi
-    
-    hdiutil detach "$RUSTDESK_VOL" -quiet || true
-else
-    echo "❌ Could not find RustDesk volume"
-    exit 1
-fi
-
-# Verify installation
-if [ ! -d "/Applications/RustDesk.app" ]; then
-    echo "❌ Failed to install RustDesk"
-    ls -la /Applications/ | grep -i rust || true
-    exit 1
-fi
-
-echo "✅ RustDesk installed to /Applications/RustDesk.app"
-
-# Create config directory
-RUSTDESK_CONFIG_DIR="$HOME/Library/Application Support/RustDesk"
-mkdir -p "${RUSTDESK_CONFIG_DIR}"
-
-# RustDesk stores config in a specific format
-# We need to set a permanent password for unattended access
-echo "⚙️ Configuring RustDesk..."
-
-# Encode password for RustDesk config (base64)
-# RustDesk expects password in base64 format in config
-ENCODED_PASSWORD=$(echo -n "${RUSTDESK_PASSWORD}" | base64)
-
-# Create RustDesk2.toml config file WITH password pre-set
-# This method sets password BEFORE first launch, which is most reliable
-cat > "${RUSTDESK_CONFIG_DIR}/RustDesk2.toml" << EOFTOML
-rendezvous_server = 'rs-ny.rustdesk.com'
-nat_type = 1
-serial = 0
-
-[options]
-allow-auto-disconnect = 'N'
-stop-service = 'N'
-direct-server = 'Y'
-allow-linux-headless = 'Y'
-EOFTOML
-
-# Also create RustDesk.toml with password (RustDesk checks both files)
-cat > "${RUSTDESK_CONFIG_DIR}/RustDesk.toml" << EOFTOML
-password = '${RUSTDESK_PASSWORD}'
-EOFTOML
-
-echo "   ✅ Pre-configured password in config files"
-echo "   📁 Config location: ${RUSTDESK_CONFIG_DIR}"
-
-# Grant necessary permissions via TCC database (may require SIP disabled)
-echo "🔐 Attempting to grant permissions..."
-
-# Try to enable accessibility (required for remote control)
-# This may fail on GitHub Actions VMs due to security restrictions
-sudo sqlite3 /Library/Application\ Support/com.apple.TCC/TCC.db \
-    "INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','com.rustdesk.RustDesk',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,$(date +%s));" 2>/dev/null || \
-    echo "⚠️ Could not set accessibility permissions (expected on VM)"
-
-sudo sqlite3 /Library/Application\ Support/com.apple.TCC/TCC.db \
-    "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenCapture','com.rustdesk.RustDesk',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,$(date +%s));" 2>/dev/null || \
-    echo "⚠️ Could not set screen capture permissions (expected on VM)"
-
-# Start RustDesk FIRST, before trying to set password
-echo "🚀 Starting RustDesk..."
-
-# Use full path to open the app
-/Applications/RustDesk.app/Contents/MacOS/rustdesk &
-RUSTDESK_PID=$!
-
-echo "   Waiting for RustDesk to initialize (PID: $RUSTDESK_PID)..."
-sleep 10
-
-# Verify RustDesk is running
-if pgrep -f "RustDesk" > /dev/null; then
-    echo "   ✅ RustDesk is running"
-else
-    echo "   ⚠️ RustDesk not detected, trying alternative launch..."
-    open -a RustDesk
-    sleep 5
-fi
-
-# Now try to set password via command line (RustDesk must be running first!)
-echo "🔑 Setting up password..."
-
-RUSTDESK_CLI="/Applications/RustDesk.app/Contents/MacOS/rustdesk"
-if [ -f "${RUSTDESK_CLI}" ]; then
-    
-    # Get the RustDesk ID first (this also confirms RustDesk is initialized)
-    RUSTDESK_ID=$("${RUSTDESK_CLI}" --get-id 2>/dev/null || echo "")
-    
-    if [ -n "${RUSTDESK_ID}" ]; then
-        echo "RUSTDESK_ID=${RUSTDESK_ID}" >> $GITHUB_ENV
-        echo "   ✅ RustDesk ID: ${RUSTDESK_ID}"
-    fi
-    
-    # Now try to set permanent password with sudo
-    # RustDesk needs to be running for this to work
-    echo "   Attempting to set password..."
-    
-    # Method 1: Try direct password setting
-    PASSWORD_OUTPUT=$(sudo "${RUSTDESK_CLI}" --password "${RUSTDESK_PASSWORD}" 2>&1)
-    echo "   Password command output: ${PASSWORD_OUTPUT}"
-    
-    # Check if it actually worked by looking at the output
-    if echo "${PASSWORD_OUTPUT}" | grep -qi "error\|fail\|denied\|not found"; then
-        echo "   ⚠️ Password setting via CLI may have failed"
-        PASSWORD_SET=false
-    else
-        echo "   ✅ Password command executed"
-        PASSWORD_SET=true
-    fi
-    
-    sleep 3
-    
-    # NOTE: Do NOT use --get-password as it hangs/opens GUI dialog
-    # Since we saw "Done!" output, the password was set successfully
-    
-    # Dump what's in the config directory for debugging
-    echo ""
-    echo "   📂 Checking config directory structure..."
-    ls -la "${RUSTDESK_CONFIG_DIR}/" 2>/dev/null || echo "   Config dir not accessible"
-    
-    # Show the config file contents (not using find as it may hang in subshell)
-    echo ""
-    echo "   📄 RustDesk.toml:"
-    cat "${RUSTDESK_CONFIG_DIR}/RustDesk.toml" 2>/dev/null || echo "   (not found)"
-    echo ""
-    echo "   📄 RustDesk2.toml:"
-    cat "${RUSTDESK_CONFIG_DIR}/RustDesk2.toml" 2>/dev/null || echo "   (not found)"
-fi
-
-# Check if RustDesk is running
-sleep 5
-echo "🔍 Checking RustDesk status..."
-
-if pgrep -f "RustDesk" > /dev/null; then
-    echo ""
-    echo "✅ RustDesk process is running!"
-    echo ""
-    
-    # Try to get ID from config files
-    if [ -z "${RUSTDESK_ID}" ]; then
-        # Check various possible ID locations
-        RUSTDESK_ID=$(cat "${RUSTDESK_CONFIG_DIR}/id" 2>/dev/null || \
-                      grep -o '"id":"[^"]*"' "${RUSTDESK_CONFIG_DIR}"/*.json 2>/dev/null | head -1 | cut -d'"' -f4 || \
-                      echo "")
-    fi
-    
-    echo "╔══════════════════════════════════════════════════════════════════╗"
-    echo "║                  🦀 RUSTDESK SETUP COMPLETE                      ║"
-    echo "╚══════════════════════════════════════════════════════════════════╝"
-    echo ""
-    if [ -n "${RUSTDESK_ID}" ]; then
-        echo "   🆔 RustDesk ID: ${RUSTDESK_ID}"
-    else
-        echo "   🆔 RustDesk ID: (check the RustDesk window or logs)"
-    fi
-    echo "   🔐 Password: ${RUSTDESK_PASSWORD}"
-    echo ""
-    echo "📖 How to Connect:"
-    echo ""
-    echo "   1. Download RustDesk client from: https://rustdesk.com/download"
-    echo "   2. Install and open RustDesk on your computer"
-    if [ -n "${RUSTDESK_ID}" ]; then
-        echo "   3. Enter ID: ${RUSTDESK_ID}"
-    else
-        echo "   3. Enter the ID shown in the RustDesk window"
-    fi
-    echo "   4. Enter password: ${RUSTDESK_PASSWORD}"
-    echo "   5. Click Connect!"
-    echo ""
-    echo "⚠️ Note: If screen/input access is denied, the VM may have"
-    echo "   restrictions. Check System Settings > Privacy & Security."
-    echo ""
-    
-    # Also check if the RustDesk service is working
-    echo "📊 RustDesk Process Info:"
-    ps aux | grep -i rustdesk | grep -v grep || true
-    
-    # Check network connectivity
-    echo ""
-    echo "🌐 Network Status:"
-    netstat -an | grep -E ":(21115|21116|21117|21118)" || echo "   RustDesk ports not yet listening (normal during startup)"
-    
-else
-    echo ""
-    echo "⚠️ RustDesk process not found."
-    echo ""
-    echo "   Possible reasons:"
-    echo "   - First launch may require manual permission grants"
-    echo "   - The macOS VM may have security restrictions"
-    echo ""
-    echo "💡 Trying to launch RustDesk again..."
-    open -a RustDesk
-    sleep 3
-    
-    if pgrep -f "RustDesk" > /dev/null; then
-        echo "✅ RustDesk is now running!"
-    else
-        echo "❌ Could not start RustDesk. Falling back to VNC."
-    fi
-fi
-
-# Display config directory contents for debugging
-echo ""
-echo "📁 Config directory contents:"
-ls -la "${RUSTDESK_CONFIG_DIR}/" 2>/dev/null || echo "   (directory is empty or inaccessible)"
-
-# Show config file contents for debugging (password is visible in workflow logs anyway)
-echo ""
-echo "📄 RustDesk.toml contents:"
-cat "${RUSTDESK_CONFIG_DIR}/RustDesk.toml" 2>/dev/null || echo "   (file not found)"
-
-echo ""
-echo "📄 RustDesk2.toml contents:"
-cat "${RUSTDESK_CONFIG_DIR}/RustDesk2.toml" 2>/dev/null || echo "   (file not found)"
-
-echo ""
-echo "🎉 RustDesk setup complete!"
+# Upstream 1.5.0 launchd definitions, vendored for review rather than fetched at runtime.
+sudo -n install -o root -g wheel -m 644 "$SCRIPT_DIR/../configs/rustdesk-daemon.plist" /Library/LaunchDaemons/com.carriez.RustDesk_service.plist
+sudo -n install -o root -g wheel -m 644 "$SCRIPT_DIR/../configs/rustdesk-agent.plist" /Library/LaunchAgents/com.carriez.RustDesk_server.plist
+sudo -n launchctl bootstrap system /Library/LaunchDaemons/com.carriez.RustDesk_service.plist
+sudo -n launchctl bootstrap "gui/$(id -u)" /Library/LaunchAgents/com.carriez.RustDesk_server.plist
+python3 "$SCRIPT_DIR/configure-rustdesk.py"
+open -a /Applications/RustDesk.app >/dev/null 2>&1
+log 'RustDesk configured. Screen/input permissions must be supported and granted by macOS.'

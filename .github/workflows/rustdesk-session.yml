@@ -1,343 +1,97 @@
-name: 🦀 RustDesk Mac Session
+name: Mac development session (RustDesk + Chrome)
 
 on:
   workflow_dispatch:
     inputs:
       duration:
-        description: 'Session duration (hours)'
-        required: true
+        description: 'Session duration in hours (leave time for setup and cleanup)'
+        type: choice
         default: '2'
-        type: choice
-        options:
-          - '1'
-          - '2'
-          - '3'
-          - '4'
-          - '5'
-          - '6'
+        options: ['1', '2', '3', '4', '5']
       macos_version:
-        description: 'macOS version'
-        required: true
-        default: '14'
+        description: 'Standard macOS runner'
         type: choice
-        options:
-          - '14'
-          - '15'
-          - '26'
-      runner_size:
-        description: 'Runner size (standard=Free/Pro, large/xlarge=Team/Enterprise, intel=macOS 26 only)'
-        required: true
-        default: 'standard'
-        type: choice
-        options:
-          - 'standard'
-          - 'large'
-          - 'xlarge'
-          - 'intel'
-      unique_ip:
-        description: 'Ensure unique IP via Cloudflare WARP VPN'
-        required: true
-        default: 'false'
-        type: choice
-        options:
-          - 'false'
-          - 'true'
+        default: '15'
+        options: ['15', '26']
+      install_parsec:
+        description: 'Also install Parsec for a manual comparison'
+        type: boolean
+        default: false
 
-env:
-  SESSION_DURATION: ${{ github.event.inputs.duration }}
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-development-session
+  cancel-in-progress: false
 
 jobs:
-  mac-rustdesk-session:
-    name: 🦀 Mac RustDesk Session (macOS ${{ github.event.inputs.macos_version }})
-    runs-on: ${{ github.event.inputs.runner_size == 'xlarge' && format('macos-{0}-xlarge', github.event.inputs.macos_version) || github.event.inputs.runner_size == 'large' && format('macos-{0}-large', github.event.inputs.macos_version) || github.event.inputs.runner_size == 'intel' && github.event.inputs.macos_version == '26' && 'macos-26-intel' || format('macos-{0}', github.event.inputs.macos_version) }}
-    timeout-minutes: 370
-    
+  session:
+    # Personal forks only. Check both identities to restrict reruns as well.
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.actor == github.repository_owner &&
+      github.triggering_actor == github.repository_owner &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: macos-${{ inputs.macos_version }}
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+    env:
+      SESSION_DURATION: ${{ inputs.duration }}
+      AGE_RECIPIENT: ${{ vars.AGE_RECIPIENT }}
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      HOMEBREW_NO_ANALYTICS: '1'
+
     steps:
-      - name: 📥 Checkout repository
-        uses: actions/checkout@v4
-
-      - name: 📦 Restore IP History Cache
-        uses: actions/cache@v4
+      - name: Checkout trusted default branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          path: .ip-history.json
-          key: ip-history-${{ github.repository_owner }}
-          restore-keys: |
-            ip-history-
+          persist-credentials: false
 
-      - name: 🌐 Detect and Track IP
-        run: |
-          chmod +x scripts/ip-manager.sh
-          ./scripts/ip-manager.sh
+      - name: Validate configuration and encryption before enabling remote access
+        timeout-minutes: 10
+        run: bash scripts/session.sh preflight
 
-      - name: 🔒 Setup Unique IP (Cloudflare WARP)
-        if: github.event.inputs.unique_ip == 'true'
-        run: |
-          chmod +x scripts/setup-warp.sh
-          ./scripts/setup-warp.sh
+      - name: Create administrator, start RustDesk, encrypt connection details
+        timeout-minutes: 15
+        run: bash scripts/session.sh setup
 
-      - name: 🔐 Create Admin User for GUI Authentication
-        run: |
-          # Create a new admin user that will appear in Users & Groups
-          ADMIN_USER="yourname"
-          echo "MAC_USER=${ADMIN_USER}" >> $GITHUB_ENV
-          
-          # Generate a secure password
-          MAC_PASSWORD=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 12)
-          
-          # Mask password in logs
-          echo "::add-mask::${MAC_PASSWORD}"
-          echo "MAC_PASSWORD=${MAC_PASSWORD}" >> $GITHUB_ENV
-          
-          echo "👤 Creating admin user: ${ADMIN_USER}"
-          
-          # Check if user already exists
-          if id "${ADMIN_USER}" &>/dev/null; then
-            echo "User ${ADMIN_USER} already exists, setting password..."
-            sudo dscl . -passwd /Users/${ADMIN_USER} "" "${MAC_PASSWORD}" 2>/dev/null || \
-            sudo sysadminctl -resetPasswordFor "${ADMIN_USER}" -newPassword "${MAC_PASSWORD}" 2>/dev/null || true
-          else
-            # Find a free UID (starting from 501 for regular users)
-            LAST_UID=$(dscl . -list /Users UniqueID | awk '{print $2}' | sort -n | tail -1)
-            NEW_UID=$((LAST_UID + 1))
-            
-            echo "   Creating user with UID: ${NEW_UID}"
-            
-            # Create the user
-            sudo dscl . -create /Users/${ADMIN_USER}
-            sudo dscl . -create /Users/${ADMIN_USER} UserShell /bin/zsh
-            sudo dscl . -create /Users/${ADMIN_USER} RealName "Your Name"
-            sudo dscl . -create /Users/${ADMIN_USER} UniqueID ${NEW_UID}
-            sudo dscl . -create /Users/${ADMIN_USER} PrimaryGroupID 20
-            sudo dscl . -create /Users/${ADMIN_USER} NFSHomeDirectory /Users/${ADMIN_USER}
-            
-            # Set password
-            sudo dscl . -passwd /Users/${ADMIN_USER} "${MAC_PASSWORD}"
-            
-            # Add to admin group
-            sudo dseditgroup -o edit -a ${ADMIN_USER} -t user admin
-            
-            # Create home directory
-            sudo createhomedir -c -u ${ADMIN_USER} 2>/dev/null || sudo mkdir -p /Users/${ADMIN_USER}
-            sudo chown -R ${ADMIN_USER}:staff /Users/${ADMIN_USER} 2>/dev/null || true
-          fi
-          
-          # Verify user was created and is admin
-          if id "${ADMIN_USER}" &>/dev/null; then
-            echo "✅ User ${ADMIN_USER} created successfully"
-            if dseditgroup -o checkmember -m "${ADMIN_USER}" admin 2>/dev/null; then
-              echo "✅ User ${ADMIN_USER} is an admin"
-            fi
-          else
-            echo "❌ Failed to create user"
-          fi
-          
-          echo ""
-          echo "   Use these credentials for System Settings:"
-          echo "   User: ${ADMIN_USER}"
-          echo "   Password: (in artifact file)"
-
-      - name: 📊 System Information
-        run: |
-          chmod +x scripts/system-info.sh
-          ./scripts/system-info.sh
-
-      - name: 🎮 Install Parsec (for optional manual use)
-        run: |
-          chmod +x scripts/install-parsec.sh
-          ./scripts/install-parsec.sh
-
-      - name: 🦀 Setup RustDesk
-        id: rustdesk
-        run: |
-          chmod +x scripts/setup-rustdesk.sh
-          
-          # Generate secure password
-          RUSTDESK_PASSWORD=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 12)
-          
-          # Mask password in GitHub Actions logs
-          echo "::add-mask::${RUSTDESK_PASSWORD}"
-          
-          # Save as environment variable (masked)
-          echo "RUSTDESK_PASSWORD=${RUSTDESK_PASSWORD}" >> $GITHUB_ENV
-          
-          # Export and run
-          export RUSTDESK_PASSWORD
-          ./scripts/setup-rustdesk.sh
-          
-          # Wait for RustDesk to register with relay servers
-          sleep 10
-
-      - name: 🔑 Get RustDesk ID
-        id: get_id
-        run: |
-          # Wait for full initialization
-          sleep 5
-          
-          RUSTDESK_CLI="/Applications/RustDesk.app/Contents/MacOS/rustdesk"
-          
-          if [ -f "$RUSTDESK_CLI" ]; then
-            # Try to get ID
-            RUSTDESK_ID=$("$RUSTDESK_CLI" --get-id 2>/dev/null || echo "")
-            
-            if [ -z "$RUSTDESK_ID" ]; then
-              # Try from config file
-              CONFIG_DIR="$HOME/Library/Application Support/RustDesk"
-              RUSTDESK_ID=$(cat "${CONFIG_DIR}/id" 2>/dev/null || echo "")
-            fi
-            
-            if [ -n "$RUSTDESK_ID" ]; then
-              echo "RUSTDESK_ID=${RUSTDESK_ID}" >> $GITHUB_ENV
-              echo "✅ RustDesk ID: ${RUSTDESK_ID}"
-            else
-              echo "⚠️ Could not retrieve RustDesk ID automatically"
-              echo "RUSTDESK_ID=Check_Logs" >> $GITHUB_ENV
-            fi
-          fi
-
-      - name: 💾 Save Credentials (Private File)
-        run: |
-          mkdir -p credentials
-          
-          # Create file with ALL credentials (NOT displayed in logs)
-          cat > credentials/connection-info.txt << EOF
-          ════════════════════════════════════════════════════════════
-                    GITHUB MAC REMOTE - CREDENTIALS
-          ════════════════════════════════════════════════════════════
-          
-          Started by: ${{ github.actor }}
-          Date/Time: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
-          Run ID: ${{ github.run_id }}
-          
-          ────────────────────────────────────────────────────────────
-          🌐 Network Information:
-          ────────────────────────────────────────────────────────────
-          
-            Public IP:  ${{ env.CURRENT_IP }}
-            Location:   ${{ env.IP_CITY }}, ${{ env.IP_COUNTRY }}
-            Provider:   ${{ env.IP_ORG }}
-            WARP VPN:   ${{ env.WARP_ENABLED || 'false' }}
-          
-          ────────────────────────────────────────────────────────────
-          🦀 RustDesk Credentials (use these to connect):
-          ────────────────────────────────────────────────────────────
-          
-            ID:       ${{ env.RUSTDESK_ID }}
-            Password: ${{ env.RUSTDESK_PASSWORD }}
-          
-          ────────────────────────────────────────────────────────────
-          🍎 macOS Admin Credentials:
-          ────────────────────────────────────────────────────────────
-          
-            User:     ${{ env.MAC_USER }}
-            Password: ${{ env.MAC_PASSWORD }}
-          
-            Use these credentials for:
-            • System Settings authentication
-            • Privacy & Security permissions (Input Monitoring, etc.)
-            • Installing apps that require admin
-            • Parsec permissions setup
-          
-          ────────────────────────────────────────────────────────────
-          📖 How to Connect:
-          ────────────────────────────────────────────────────────────
-          
-          1. Download RustDesk from: https://rustdesk.com/download
-          2. Install and open RustDesk on your computer
-          3. Enter the RustDesk ID shown above
-          4. Enter the RustDesk password shown above
-          5. Click Connect!
-          
-          ────────────────────────────────────────────────────────────
-          🎮 Optional: Parsec is also installed!
-          ────────────────────────────────────────────────────────────
-          
-          If you prefer Parsec for lower latency:
-          1. Connect via RustDesk first
-          2. Open Parsec from Applications
-          3. Log in with your Parsec account
-          4. When prompted for permissions, use macOS password above
-          5. Enable hosting and connect from your other device
-          
-          ════════════════════════════════════════════════════════════
-          ⚠️  WARNING: This file contains sensitive credentials.
-              Do not share with others.
-          ════════════════════════════════════════════════════════════
-          EOF
-
-      - name: 📦 Upload Credentials Artifact
-        uses: actions/upload-artifact@v4
+      - name: Publish ONLY encrypted connection details
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          # Artifact name includes the user who started it for identification
-          name: credentials-${{ github.actor }}-${{ github.run_id }}
-          path: credentials/
+          name: encrypted-connection-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mac-remote-${{ github.run_id }}-${{ github.run_attempt }}/public/connection-info.txt.age
+          if-no-files-found: error
           retention-days: 1
 
-      - name: 📋 Connection Instructions
-        run: |
-          echo ""
-          echo "╔══════════════════════════════════════════════════════════════════╗"
-          echo "║              🦀 GITHUB MAC REMOTE - READY                        ║"
-          echo "╚══════════════════════════════════════════════════════════════════╝"
-          echo ""
-          echo "👤 Session started by: ${{ github.actor }}"
-          echo ""
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🌐 Public IP: ${{ env.CURRENT_IP }}"
-          echo "📍 Location: ${{ env.IP_CITY }}, ${{ env.IP_COUNTRY }}"
-          if [ "${{ env.WARP_ENABLED }}" = "true" ]; then
-            echo "🔒 VPN: Cloudflare WARP (Unique IP Enabled)"
-          fi
-          if [ "${{ env.IP_IS_DUPLICATE }}" = "true" ]; then
-            echo "⚠️  WARNING: This IP was previously used!"
-          fi
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo ""
-          echo "🍎 macOS User: ${{ env.MAC_USER }}"
-          echo "🔐 macOS Password: ████████████ (in artifact)"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo ""
-          echo "🔑 RustDesk ID: ${{ env.RUSTDESK_ID }}"
-          echo "🔐 RustDesk Password: ████████████ (in artifact)"
-          echo ""
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo ""
-          echo "📥 HOW TO GET ALL PASSWORDS:"
-          echo ""
-          echo "   1. Go to the 'Summary' tab of this workflow"
-          echo "   2. Download artifact: credentials-${{ github.actor }}-${{ github.run_id }}"
-          echo "   3. Open the connection-info.txt file"
-          echo ""
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo ""
-          echo "📖 How to connect:"
-          echo ""
-          echo "   1. Download RustDesk: https://rustdesk.com/download"
-          echo "   2. Open RustDesk and enter ID: ${{ env.RUSTDESK_ID }}"
-          echo "   3. Enter the RustDesk password from the artifact"
-          echo "   4. Click Connect!"
-          echo ""
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo ""
-          echo "🎮 Parsec is also installed! Use macOS password for permissions."
-          echo ""
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo ""
-          echo "⏱️  Session active for ${{ env.SESSION_DURATION }} hour(s)"
-          echo ""
-          echo "🔒 SECURITY: Passwords are NOT displayed in logs."
-          echo "   Only you can download the artifact with credentials."
-          echo ""
+      - name: Install and open Chrome with Chrome Remote Desktop Host
+        id: chrome
+        timeout-minutes: 15
+        # Preserve RustDesk if Google's installer is unavailable.
+        continue-on-error: true
+        run: bash scripts/install-chrome-remote-desktop.sh
 
-      - name: ⏱️ Keep Session Alive
-        run: |
-          chmod +x scripts/keep-alive.sh
-          
-          export DURATION_HOURS="${{ env.SESSION_DURATION }}"
-          ./scripts/keep-alive.sh
+      - name: Install optional Parsec
+        if: inputs.install_parsec
+        timeout-minutes: 10
+        continue-on-error: true
+        run: bash scripts/install-parsec.sh
 
-      - name: 💾 Save IP History Cache
+      - name: Connection instructions
+        env:
+          CHROME_STATUS: ${{ steps.chrome.outcome }}
+        run: |
+          printf '%s\n' 'Download the encrypted-connection artifact and decrypt it locally with your age key.'
+          printf '%s\n' 'Use the enclosed RustDesk ID/password. No connection details are published in these logs.'
+          printf 'Chrome/CRD installation step: %s\n' "$CHROME_STATUS"
+          printf '%s\n' 'Complete Google registration and macOS permissions through RustDesk; see README.md.'
+
+      - name: Development session
+        run: bash scripts/keep-alive.sh
+
+      - name: Stop remote access and remove temporary credentials
         if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: .ip-history.json
-          key: ip-history-${{ github.repository_owner }}-${{ github.run_id }}
+        timeout-minutes: 3
+        run: bash scripts/session.sh cleanup

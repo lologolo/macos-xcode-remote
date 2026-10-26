@@ -1,0 +1,9 @@
+# Applied to BOTH root/service and console-user scopes before starting either.
+# Never accept a click-only connection or a generated temporary password.
+[options]
+approve-mode = 'password'
+verification-method = 'use-permanent-password'
+direct-server = 'N'
+enable-lan-discovery = 'N'
+enable-tunnel = 'N'
+enable-terminal = 'N'

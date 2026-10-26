@@ -7,6 +7,10 @@ tmp/
 credentials/
 *.credentials
 connection-info.txt
+*.agekey
+remote-mac-key.txt
+credentials.json
+__pycache__/
 
 # macOS
 .DS_Store
